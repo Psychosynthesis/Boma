@@ -12,6 +12,7 @@ export interface ReadJSONProps {
   filePath: string;
   parseJSON?: boolean;
   createIfNotFound?: boolean | SerializableObject | SerializableArray; // Файл с чем создать, если не создан
+  silent?: boolean; // Не выводим предупреждения
 }
 
 export interface SaveJSONProps {
@@ -20,6 +21,7 @@ export interface SaveJSONProps {
   format?: boolean;
   logSaving?: boolean;
   replaceNonSerializable?: boolean; // Если true — заменяем плохие значения на строковый флаг типа
+  silent?: boolean; // Не выводим предупреждения
 }
 
 export interface addToJSONProps {
@@ -28,6 +30,7 @@ export interface addToJSONProps {
   format?: boolean;
   logSaving?: boolean;
   replaceNonSerializable?: boolean; // Пробрасываем тот же режим и сюда
+  silent?: boolean; // Не выводим предупреждения
 }
 
 export type ErrorWithCode = Error & { code: string };
@@ -66,11 +69,11 @@ const getDate = () => {
   return castedDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 };
 
-const isObjectLike = (value: unknown): value is object => {
+export const isObjectLike = (value: unknown): value is object => {
   return typeof value === 'object' && value !== null;
 };
 
-const isPlainMergeableObject = (value: unknown): value is Record<string, unknown> => {
+export const isPlainMergeableObject = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 };
 
@@ -101,7 +104,7 @@ const getIssueMessage = (issue: SerializationIssue) => {
 // ancestors — это стек текущего обхода, чтобы ловить именно цикл, а не просто повторную ссылку
 export const getSerializationIssues = (
   value: unknown,
-  path = '$',
+  path = '[OBJECT]',
   ancestors = new WeakMap<object, string>(),
   issues: SerializationIssue[] = [],
 ): SerializationIssue[] => {
@@ -259,12 +262,7 @@ export const sanitizeNonSerializable = (
   }
 
   // Явно плохие типы заменяем названием типа
-  if (
-    typeof value === 'undefined' ||
-    typeof value === 'function' ||
-    typeof value === 'symbol' ||
-    typeof value === 'bigint'
-  ) {
+  if (['undefined', 'function', 'symbol', 'bigint'].includes(typeof value)) {
     return typeFlagFromValue(value);
   }
 
@@ -322,16 +320,17 @@ export const saveJSON = (saveInput: SaveJSONProps) => {
     format = false,
     logSaving = false,
     replaceNonSerializable = false,
+    silent = true,
   } = saveInput;
 
   // Сначала собираем все проблемы, чтобы можно было вывести нормальную диагностику
   const issues = getSerializationIssues(objToSave);
 
   if (issues.length > 0) {
-    logSerializationIssues(issues);
+    !silent && logSerializationIssues(issues);
 
     // Если режим замены выключен — ведём себя как раньше, но с точным описанием поля
-    if (!replaceNonSerializable) {
+    if (!replaceNonSerializable && !silent) {
       const firstIssue = issues[0];
       const errorMessage = `[${getDate()}] Boma got non JSON-serializable object at saveJSON! ${getIssueMessage(firstIssue)}`;
       console.error(errorMessage);
@@ -348,7 +347,7 @@ export const saveJSON = (saveInput: SaveJSONProps) => {
   try {
     const json = format ? JSON.stringify(valueToSave, null, 2) : JSON.stringify(valueToSave);
     writeFileSync(filePath, json, 'utf8');
-    logSaving && console.log(`[${getDate()}] Write file ${filePath} successfully`);
+    !silent && logSaving && console.log(`[${getDate()}] Write file ${filePath} successfully`);
   } catch (error) {
     if (isErrorWithCode(error)) {
       console.error(`[${getDate()}] Boma got filesystem error for ${filePath}:`, error);
@@ -358,7 +357,7 @@ export const saveJSON = (saveInput: SaveJSONProps) => {
 };
 
 export const readJSON = (props: ReadJSONProps) => {
-  const { filePath, createIfNotFound = false, parseJSON = true } = props;
+  const { filePath, createIfNotFound = false, parseJSON = true, silent = true } = props;
 
   try {
     const savedfile = readFileSync(filePath, 'utf8');
@@ -375,7 +374,7 @@ export const readJSON = (props: ReadJSONProps) => {
         case 'ENOENT':
           // Если файла нет и попросили создать — создаём
           if (createIfNotFound) {
-            console.log('Try to create: ', filePath);
+            !silent && console.log('Try to create: ', filePath);
             try {
               const initialContent =
                 typeof createIfNotFound === 'boolean' ? '{}' : JSON.stringify(createIfNotFound);
@@ -386,7 +385,8 @@ export const readJSON = (props: ReadJSONProps) => {
             return typeof createIfNotFound === 'boolean' ? {} : createIfNotFound;
           }
 
-          console.log('File not found: ', filePath);
+          // Здесь, пожалуй, лучше выводить инфу
+          console.info("Boma can't find file: ", filePath);
           return parseJSON ? {} : null;
 
         case 'EACCES': // Нет прав
@@ -419,9 +419,10 @@ export const addToJSON = (saveInput: addToJSONProps) => {
     format = false,
     logSaving = false,
     replaceNonSerializable = false,
+    silent = true,
   } = saveInput;
 
-  const oldJSON = readJSON({ filePath, createIfNotFound: true });
+  const oldJSON = readJSON({ filePath, createIfNotFound: true, silent });
 
   // Если старый JSON битый или не объект — просто перезаписываем файл
   if (oldJSON === null || typeof oldJSON !== 'object') {
@@ -431,6 +432,7 @@ export const addToJSON = (saveInput: addToJSONProps) => {
       format,
       logSaving,
       replaceNonSerializable,
+      silent
     });
   }
 
@@ -442,6 +444,7 @@ export const addToJSON = (saveInput: addToJSONProps) => {
       format,
       logSaving,
       replaceNonSerializable,
+      silent
     });
 
     return;
@@ -455,6 +458,7 @@ export const addToJSON = (saveInput: addToJSONProps) => {
       format,
       logSaving,
       replaceNonSerializable,
+      silent
     });
 
     return;
@@ -468,6 +472,7 @@ export const addToJSON = (saveInput: addToJSONProps) => {
       format,
       logSaving,
       replaceNonSerializable,
+      silent
     });
 
     return;

@@ -10,6 +10,7 @@ export interface ReadJSONProps {
     filePath: string;
     parseJSON?: boolean;
     createIfNotFound?: boolean | SerializableObject | SerializableArray;
+    silent?: boolean;
 }
 export interface SaveJSONProps {
     filePath: string;
@@ -17,6 +18,7 @@ export interface SaveJSONProps {
     format?: boolean;
     logSaving?: boolean;
     replaceNonSerializable?: boolean;
+    silent?: boolean;
 }
 export interface addToJSONProps {
     filePath: string;
@@ -24,6 +26,7 @@ export interface addToJSONProps {
     format?: boolean;
     logSaving?: boolean;
     replaceNonSerializable?: boolean;
+    silent?: boolean;
 }
 export type ErrorWithCode = Error & {
     code: string;
@@ -41,6 +44,8 @@ export interface SerializationIssue {
 export declare const isErrorWithCode: (error: unknown) => error is ErrorWithCode;
 export declare const isErrorWithMessage: (error: unknown) => error is ErrorWithMessage;
 export declare const isSyntaxError: (error: unknown) => error is SyntaxError;
+export declare const isObjectLike: (value: unknown) => value is object;
+export declare const isPlainMergeableObject: (value: unknown) => value is Record<string, unknown>;
 export declare const getSerializationIssues: (value: unknown, path?: string, ancestors?: WeakMap<object, string>, issues?: SerializationIssue[]) => SerializationIssue[];
 export declare const isSerializable: (value: unknown) => value is Serializable;
 export declare const sanitizeNonSerializable: (value: unknown, path?: string, ancestors?: WeakMap<object, string>) => Serializable;

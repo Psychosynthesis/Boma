@@ -6,7 +6,12 @@
 # Usage
 
 ```JS
-const logs = readJSON({ filePath: '/support.log', createIfNotFound: {}, parseJSON: true });
+const logs = readJSON({
+  filePath: '/support.log',
+  createIfNotFound: {},
+  parseJSON: true,
+  silent: true, // Do not log warnings (only file not found will be logged)
+});
 /*
 logs = {
   any: {}, //
@@ -18,7 +23,8 @@ saveJSON({
   filePath: '/test.json',
   objToSave: { any: {}, key: {} },
   format: true,
-  logSaving: false
+  logSaving: false,
+  silent: true, // Do not log warnings
 }); // Format for save line break's
 /* Will save:
 {
@@ -40,6 +46,8 @@ addToJSON({
 ```
 
 ## Types
+Main types:
+
 ```typescript
 export type SerializablePrimitive = string | number | boolean | null;
 export type SerializableArray = Serializable[];
@@ -58,6 +66,7 @@ export interface SaveJSONProps {
   format?: boolean
   logSaving?: boolean;
   replaceNonSerializable?: boolean; // Заменять несереализуемые значения их типом
+  silent?: boolean; // Не выводим предупреждения
 }
 
 export interface addToJSONProps {
@@ -65,5 +74,15 @@ export interface addToJSONProps {
   dataToAdd: SerializableObject | SerializableArray;
   format?: boolean
   logSaving?: boolean;
+  silent?: boolean; // Не выводим предупреждения
 }
+
+// We also export some helpers:
+export const isSerializable = (value: unknown) => boolean;
+export const isObjectLike = (value: unknown) => boolean;
+export const isPlainMergeableObject = (value: unknown) => boolean;
+
+export const isErrorWithCode = (error: unknown) => boolean;
+export const isErrorWithMessage = (error: unknown) => boolean;
+export const isSyntaxError = (error: unknown) => boolean;
 ```

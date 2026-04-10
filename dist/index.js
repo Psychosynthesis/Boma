@@ -12,10 +12,10 @@ const getDate = () => {
     const castedDate = new Date();
     return castedDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 };
-const isObjectLike = (value) => {
+export const isObjectLike = (value) => {
     return typeof value === 'object' && value !== null;
 };
-const isPlainMergeableObject = (value) => {
+export const isPlainMergeableObject = (value) => {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 };
 const pathJoin = (basePath, key) => {
@@ -35,7 +35,7 @@ const getIssueMessage = (issue) => {
     }
     return `Field "${issue.path}" has non-serializable value of type "${issue.kind}"`;
 };
-export const getSerializationIssues = (value, path = '$', ancestors = new WeakMap(), issues = []) => {
+export const getSerializationIssues = (value, path = '[OBJECT]', ancestors = new WeakMap(), issues = []) => {
     if (value === null) {
         return issues;
     }
@@ -150,10 +150,7 @@ export const sanitizeNonSerializable = (value, path = '$', ancestors = new WeakM
     if (typeof value === 'number') {
         return Number.isFinite(value) ? value : 'non-finite-number';
     }
-    if (typeof value === 'undefined' ||
-        typeof value === 'function' ||
-        typeof value === 'symbol' ||
-        typeof value === 'bigint') {
+    if (['undefined', 'function', 'symbol', 'bigint'].includes(typeof value)) {
         return typeFlagFromValue(value);
     }
     if (Array.isArray(value)) {
@@ -185,11 +182,11 @@ const logSerializationIssues = (issues) => {
     }
 };
 export const saveJSON = (saveInput) => {
-    const { filePath, objToSave, format = false, logSaving = false, replaceNonSerializable = false, } = saveInput;
+    const { filePath, objToSave, format = false, logSaving = false, replaceNonSerializable = false, silent = true, } = saveInput;
     const issues = getSerializationIssues(objToSave);
     if (issues.length > 0) {
-        logSerializationIssues(issues);
-        if (!replaceNonSerializable) {
+        !silent && logSerializationIssues(issues);
+        if (!replaceNonSerializable && !silent) {
             const firstIssue = issues[0];
             const errorMessage = `[${getDate()}] Boma got non JSON-serializable object at saveJSON! ${getIssueMessage(firstIssue)}`;
             console.error(errorMessage);
@@ -202,7 +199,7 @@ export const saveJSON = (saveInput) => {
     try {
         const json = format ? JSON.stringify(valueToSave, null, 2) : JSON.stringify(valueToSave);
         writeFileSync(filePath, json, 'utf8');
-        logSaving && console.log(`[${getDate()}] Write file ${filePath} successfully`);
+        !silent && logSaving && console.log(`[${getDate()}] Write file ${filePath} successfully`);
     }
     catch (error) {
         if (isErrorWithCode(error)) {
@@ -212,7 +209,7 @@ export const saveJSON = (saveInput) => {
     }
 };
 export const readJSON = (props) => {
-    const { filePath, createIfNotFound = false, parseJSON = true } = props;
+    const { filePath, createIfNotFound = false, parseJSON = true, silent = true } = props;
     try {
         const savedfile = readFileSync(filePath, 'utf8');
         if (parseJSON) {
@@ -225,7 +222,7 @@ export const readJSON = (props) => {
             switch (err.code) {
                 case 'ENOENT':
                     if (createIfNotFound) {
-                        console.log('Try to create: ', filePath);
+                        !silent && console.log('Try to create: ', filePath);
                         try {
                             const initialContent = typeof createIfNotFound === 'boolean' ? '{}' : JSON.stringify(createIfNotFound);
                             writeFileSync(filePath, initialContent, 'utf8');
@@ -235,7 +232,7 @@ export const readJSON = (props) => {
                         }
                         return typeof createIfNotFound === 'boolean' ? {} : createIfNotFound;
                     }
-                    console.log('File not found: ', filePath);
+                    console.info("Boma can't find file: ", filePath);
                     return parseJSON ? {} : null;
                 case 'EACCES':
                     console.error(`Access denied for ${filePath}`);
@@ -254,8 +251,8 @@ export const readJSON = (props) => {
     }
 };
 export const addToJSON = (saveInput) => {
-    const { filePath, dataToAdd, format = false, logSaving = false, replaceNonSerializable = false, } = saveInput;
-    const oldJSON = readJSON({ filePath, createIfNotFound: true });
+    const { filePath, dataToAdd, format = false, logSaving = false, replaceNonSerializable = false, silent = true, } = saveInput;
+    const oldJSON = readJSON({ filePath, createIfNotFound: true, silent });
     if (oldJSON === null || typeof oldJSON !== 'object') {
         return saveJSON({
             filePath,
@@ -263,6 +260,7 @@ export const addToJSON = (saveInput) => {
             format,
             logSaving,
             replaceNonSerializable,
+            silent
         });
     }
     if (Array.isArray(oldJSON) && Array.isArray(dataToAdd)) {
@@ -272,6 +270,7 @@ export const addToJSON = (saveInput) => {
             format,
             logSaving,
             replaceNonSerializable,
+            silent
         });
         return;
     }
@@ -282,6 +281,7 @@ export const addToJSON = (saveInput) => {
             format,
             logSaving,
             replaceNonSerializable,
+            silent
         });
         return;
     }
@@ -292,6 +292,7 @@ export const addToJSON = (saveInput) => {
             format,
             logSaving,
             replaceNonSerializable,
+            silent
         });
         return;
     }
