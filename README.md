@@ -14,7 +14,12 @@ logs = {
 }
 */
 
-saveJSON({ filePath: '/test.json', objToSave: { any: {}, key: {} }, format: true, logSaving: false }); // Format for save line break's
+saveJSON({
+  filePath: '/test.json',
+  objToSave: { any: {}, key: {} },
+  format: true,
+  logSaving: false
+}); // Format for save line break's
 /* Will save:
 {
   "any": {}, // saved line break's
@@ -22,9 +27,15 @@ saveJSON({ filePath: '/test.json', objToSave: { any: {}, key: {} }, format: true
 }
 */
 
-addToJSON({ filePath: '/support.log', dataToAdd: { 6sdf89g7dghg: { any: "data" }}, format: false, logSaving: false });
+addToJSON({
+  filePath: '/support.log',
+  dataToAdd: { 6sdf89g7dghg: { any: "data", someFunc: () => {} }},
+  format: false,
+  logSaving: false,
+  replaceNonSerializable: true
+});
 /* Will save:
-"{ "any": {}, "key": {}, "6sdf89g7dghg": { "any": "data" } }"
+"{ "6sdf89g7dghg": { "any": "data", "someFunc": "function" } }"
 */
 ```
 
@@ -46,6 +57,7 @@ export interface SaveJSONProps {
   objToSave: Serializable;
   format?: boolean
   logSaving?: boolean;
+  replaceNonSerializable?: boolean; // Заменять несереализуемые значения их типом
 }
 
 export interface addToJSONProps {
