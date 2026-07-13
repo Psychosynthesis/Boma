@@ -1,5 +1,7 @@
 # Boma JSON helper
 
+[![npm version](https://img.shields.io/npm/v/boma?color=%20027dec)](https://www.npmjs.org/package/boma)
+
 Super-simple helper for reading, saving and updating JSON files.
 
 Works in synchronous mode by default.
