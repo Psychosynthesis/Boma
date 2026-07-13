@@ -11,6 +11,7 @@ export interface ReadJSONProps {
     parseJSON?: boolean;
     createIfNotFound?: boolean | SerializableObject | SerializableArray;
     silent?: boolean;
+    async?: boolean;
 }
 export interface SaveJSONProps {
     filePath: string;
@@ -19,6 +20,7 @@ export interface SaveJSONProps {
     logSaving?: boolean;
     replaceNonSerializable?: boolean;
     silent?: boolean;
+    async?: boolean;
 }
 export interface addToJSONProps {
     filePath: string;
@@ -27,7 +29,27 @@ export interface addToJSONProps {
     logSaving?: boolean;
     replaceNonSerializable?: boolean;
     silent?: boolean;
+    async?: boolean;
 }
+export type ReadJSONSyncProps = ReadJSONProps & {
+    async?: false;
+};
+export type ReadJSONAsyncProps = ReadJSONProps & {
+    async: true;
+};
+export type SaveJSONSyncProps = SaveJSONProps & {
+    async?: false;
+};
+export type SaveJSONAsyncProps = SaveJSONProps & {
+    async: true;
+};
+export type AddToJSONSyncProps = addToJSONProps & {
+    async?: false;
+};
+export type AddToJSONAsyncProps = addToJSONProps & {
+    async: true;
+};
+export type ReadJSONResult<T = any> = T | string | null;
 export type ErrorWithCode = Error & {
     code: string;
 };
@@ -44,12 +66,12 @@ export interface SerializationIssue {
 export declare const isErrorWithCode: (error: unknown) => error is ErrorWithCode;
 export declare const isErrorWithMessage: (error: unknown) => error is ErrorWithMessage;
 export declare const isSyntaxError: (error: unknown) => error is SyntaxError;
+export declare const getDate: () => string;
 export declare const isObjectLike: (value: unknown) => value is object;
 export declare const isPlainMergeableObject: (value: unknown) => value is Record<string, unknown>;
+export declare const getIssueMessage: (issue: SerializationIssue) => string;
 export declare const getSerializationIssues: (value: unknown, path?: string, ancestors?: WeakMap<object, string>, issues?: SerializationIssue[]) => SerializationIssue[];
 export declare const isSerializable: (value: unknown) => value is Serializable;
 export declare const sanitizeNonSerializable: (value: unknown, path?: string, ancestors?: WeakMap<object, string>) => Serializable;
-export declare const saveJSON: (saveInput: SaveJSONProps) => void;
-export declare const readJSON: (props: ReadJSONProps) => any;
-export declare const addToJSON: (saveInput: addToJSONProps) => void;
+export declare const logSerializationIssues: (issues: SerializationIssue[]) => void;
 export {};

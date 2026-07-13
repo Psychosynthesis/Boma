@@ -1,5 +1,3 @@
-import { readFileSync, writeFileSync } from 'fs';
-
 export type SerializablePrimitive = string | number | boolean | null;
 export type SerializableArray = Serializable[];
 export type SerializableObject = { [key: string]: Serializable };
@@ -13,6 +11,7 @@ export interface ReadJSONProps {
   parseJSON?: boolean;
   createIfNotFound?: boolean | SerializableObject | SerializableArray; // Файл с чем создать, если не создан
   silent?: boolean; // Не выводим предупреждения
+  async?: boolean; // Если true — используем асинхронную реализацию
 }
 
 export interface SaveJSONProps {
@@ -22,6 +21,7 @@ export interface SaveJSONProps {
   logSaving?: boolean;
   replaceNonSerializable?: boolean; // Если true — заменяем плохие значения на строковый флаг типа
   silent?: boolean; // Не выводим предупреждения
+  async?: boolean; // Если true — используем асинхронную реализацию
 }
 
 export interface addToJSONProps {
@@ -31,7 +31,20 @@ export interface addToJSONProps {
   logSaving?: boolean;
   replaceNonSerializable?: boolean; // Пробрасываем тот же режим и сюда
   silent?: boolean; // Не выводим предупреждения
+  async?: boolean; // Если true — используем асинхронную реализацию
 }
+
+// Отдельные типы нужны для перегрузок функций:
+// async: true возвращает Promise, async: false или отсутствие async — обычное значение
+export type ReadJSONSyncProps = ReadJSONProps & { async?: false };
+export type ReadJSONAsyncProps = ReadJSONProps & { async: true };
+export type SaveJSONSyncProps = SaveJSONProps & { async?: false };
+export type SaveJSONAsyncProps = SaveJSONProps & { async: true };
+export type AddToJSONSyncProps = addToJSONProps & { async?: false };
+export type AddToJSONAsyncProps = addToJSONProps & { async: true };
+
+// T = any сохраняет прежнюю, нестрогую типизацию результата JSON.parse
+export type ReadJSONResult<T = any> = T | string | null;
 
 export type ErrorWithCode = Error & { code: string };
 export type ErrorWithMessage = Error & { message: any };
@@ -64,7 +77,7 @@ export const isSyntaxError = (error: unknown): error is SyntaxError => {
   return error instanceof SyntaxError;
 };
 
-const getDate = () => {
+export const getDate = () => {
   const castedDate = new Date();
   return castedDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 };
@@ -88,7 +101,7 @@ const pathJoin = (basePath: string, key: string | number) => {
     : `${basePath}[${JSON.stringify(key)}]`;
 };
 
-const getIssueMessage = (issue: SerializationIssue) => {
+export const getIssueMessage = (issue: SerializationIssue) => {
   if (issue.kind === 'circular') {
     return `Field "${issue.path}" contains circular reference${issue.circularTo ? ` to "${issue.circularTo}"` : ''}`;
   }
@@ -252,7 +265,12 @@ export const sanitizeNonSerializable = (
   ancestors = new WeakMap<object, string>(),
 ): Serializable => {
   // Нормальные JSON-значения отдаём как есть
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+  // null проверяем отдельно, чтобы TypeScript точно сузил unknown до Serializable
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === 'string' || typeof value === 'boolean') {
     return value;
   }
 
@@ -307,176 +325,8 @@ export const sanitizeNonSerializable = (
 };
 
 // Пишем info по каждой найденной проблеме
-const logSerializationIssues = (issues: SerializationIssue[]) => {
+export const logSerializationIssues = (issues: SerializationIssue[]) => {
   for (const issue of issues) {
     console.info(`[${getDate()}] Boma serialization info: ${getIssueMessage(issue)}`);
   }
-};
-
-export const saveJSON = (saveInput: SaveJSONProps) => {
-  const {
-    filePath,
-    objToSave,
-    format = false,
-    logSaving = false,
-    replaceNonSerializable = false,
-    silent = true,
-  } = saveInput;
-
-  // Сначала собираем все проблемы, чтобы можно было вывести нормальную диагностику
-  const issues = getSerializationIssues(objToSave);
-
-  if (issues.length > 0) {
-    !silent && logSerializationIssues(issues);
-
-    // Если режим замены выключен — ведём себя как раньше, но с точным описанием поля
-    if (!replaceNonSerializable && !silent) {
-      const firstIssue = issues[0];
-      const errorMessage = `[${getDate()}] Boma got non JSON-serializable object at saveJSON! ${getIssueMessage(firstIssue)}`;
-      console.error(errorMessage);
-      throw new Error(errorMessage);
-    }
-  }
-
-  // Если режим замены включён — чистим объект перед сохранением
-  const valueToSave =
-    replaceNonSerializable && issues.length > 0
-      ? sanitizeNonSerializable(objToSave)
-      : (objToSave as Serializable);
-
-  try {
-    const json = format ? JSON.stringify(valueToSave, null, 2) : JSON.stringify(valueToSave);
-    writeFileSync(filePath, json, 'utf8');
-    !silent && logSaving && console.log(`[${getDate()}] Write file ${filePath} successfully`);
-  } catch (error) {
-    if (isErrorWithCode(error)) {
-      console.error(`[${getDate()}] Boma got filesystem error for ${filePath}:`, error);
-    }
-    throw error;
-  }
-};
-
-export const readJSON = (props: ReadJSONProps) => {
-  const { filePath, createIfNotFound = false, parseJSON = true, silent = true } = props;
-
-  try {
-    const savedfile = readFileSync(filePath, 'utf8');
-
-    // Для пустого файла возвращаем null, чтобы JSON.parse не падал
-    if (parseJSON) {
-      return savedfile.trim() === '' ? null : JSON.parse(savedfile);
-    }
-
-    return savedfile;
-  } catch (err) {
-    if (isErrorWithCode(err)) {
-      switch (err.code) {
-        case 'ENOENT':
-          // Если файла нет и попросили создать — создаём
-          if (createIfNotFound) {
-            !silent && console.log('Try to create: ', filePath);
-            try {
-              const initialContent =
-                typeof createIfNotFound === 'boolean' ? '{}' : JSON.stringify(createIfNotFound);
-              writeFileSync(filePath, initialContent, 'utf8');
-            } catch (writeErr) {
-              console.error(`Error creating file ${filePath}: `, writeErr, '\n');
-            }
-            return typeof createIfNotFound === 'boolean' ? {} : createIfNotFound;
-          }
-
-          // Здесь, пожалуй, лучше выводить инфу
-          console.info("Boma can't find file: ", filePath);
-          return parseJSON ? {} : null;
-
-        case 'EACCES': // Нет прав
-          console.error(`Access denied for ${filePath}`);
-          return null;
-
-        default:
-          console.error(`Some filesystem error when try readJSON: ${filePath}`);
-          return null;
-      }
-    }
-
-    if (isSyntaxError(err)) {
-      console.error('File ', filePath, ' has incorrect JSON syntax', '\n');
-      return null;
-    }
-
-    console.error('Function readJSON error:', err, '\n');
-    return null;
-  }
-};
-
-// Важно:
-// если в сохранённом JSON уже были те же ключи, что и в dataToAdd,
-// то эта функция их просто перезапишет
-export const addToJSON = (saveInput: addToJSONProps) => {
-  const {
-    filePath,
-    dataToAdd,
-    format = false,
-    logSaving = false,
-    replaceNonSerializable = false,
-    silent = true,
-  } = saveInput;
-
-  const oldJSON = readJSON({ filePath, createIfNotFound: true, silent });
-
-  // Если старый JSON битый или не объект — просто перезаписываем файл
-  if (oldJSON === null || typeof oldJSON !== 'object') {
-    return saveJSON({
-      filePath,
-      objToSave: dataToAdd,
-      format,
-      logSaving,
-      replaceNonSerializable,
-      silent
-    });
-  }
-
-  // Был массив + пришёл массив => склеиваем
-  if (Array.isArray(oldJSON) && Array.isArray(dataToAdd)) {
-    saveJSON({
-      filePath,
-      objToSave: [...oldJSON, ...dataToAdd],
-      format,
-      logSaving,
-      replaceNonSerializable,
-      silent
-    });
-
-    return;
-  }
-
-  // Был объект + пришёл объект => мерджим
-  if (isPlainMergeableObject(oldJSON) && isPlainMergeableObject(dataToAdd)) {
-    saveJSON({
-      filePath,
-      objToSave: { ...oldJSON, ...dataToAdd },
-      format,
-      logSaving,
-      replaceNonSerializable,
-      silent
-    });
-
-    return;
-  }
-
-  // В файле пустой объект, а сохранить хотим массив => просто пишем массив
-  if (Array.isArray(dataToAdd) && isPlainMergeableObject(oldJSON) && Object.keys(oldJSON).length === 0) {
-    saveJSON({
-      filePath,
-      objToSave: [...dataToAdd],
-      format,
-      logSaving,
-      replaceNonSerializable,
-      silent
-    });
-
-    return;
-  }
-
-  throw new Error('Cannot merge array with object');
 };

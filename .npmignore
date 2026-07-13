@@ -1,5 +1,6 @@
 index.ts
 node_modules
-package-lock.json
 scripts
+source
+package-lock.json
 tsconfig.json

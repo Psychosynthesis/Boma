@@ -1,13 +1,15 @@
 {
   "compilerOptions": {
-    "outDir": "dist",
+    "rootDir": "./source",
+    "outDir": "./dist",
+
     "target": "ES2020",
-    "module": "ES2020",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2020"],
-    "outDir": "dist",
+
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "moduleResolution": "node",
     "strict": true,
     "useDefineForClassFields": true,
     "noUnusedLocals": true,
@@ -18,5 +20,5 @@
     "declaration": true,
     "emitDeclarationOnly": false
   },
-  "include": [ "./index.ts" ]
+  "files": ["./source/boma.ts"]
 }

@@ -1,0 +1,11 @@
+import type { AddToJSONAsyncProps, addToJSONProps, AddToJSONSyncProps, ReadJSONAsyncProps, ReadJSONProps, ReadJSONResult, ReadJSONSyncProps, SaveJSONAsyncProps, SaveJSONProps, SaveJSONSyncProps } from './common.js';
+export * from './common.js';
+export declare function saveJSON(props: SaveJSONAsyncProps): Promise<void>;
+export declare function saveJSON(props: SaveJSONSyncProps): void;
+export declare function saveJSON(props: SaveJSONProps): void | Promise<void>;
+export declare function readJSON<T = any>(props: ReadJSONAsyncProps): Promise<ReadJSONResult<T>>;
+export declare function readJSON<T = any>(props: ReadJSONSyncProps): ReadJSONResult<T>;
+export declare function readJSON<T = any>(props: ReadJSONProps): ReadJSONResult<T> | Promise<ReadJSONResult<T>>;
+export declare function addToJSON(props: AddToJSONAsyncProps): Promise<void>;
+export declare function addToJSON(props: AddToJSONSyncProps): void;
+export declare function addToJSON(props: addToJSONProps): void | Promise<void>;
