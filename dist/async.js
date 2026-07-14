@@ -1,14 +1,30 @@
 import { readFile, writeFile } from 'fs/promises';
+import { resolve } from 'path';
 import { getDate, getIssueMessage, getSerializationIssues, isErrorWithCode, isPlainMergeableObject, isSyntaxError, logSerializationIssues, sanitizeNonSerializable, } from './common.js';
+const addToJSONQueues = new Map();
+const runAddToJSONExclusive = async (filePath, operation) => {
+    const key = resolve(filePath);
+    const previous = addToJSONQueues.get(key) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    const settled = current.then(() => undefined, () => undefined);
+    addToJSONQueues.set(key, settled);
+    try {
+        return await current;
+    }
+    finally {
+        if (addToJSONQueues.get(key) === settled) {
+            addToJSONQueues.delete(key);
+        }
+    }
+};
 export const saveJSONAsync = async (saveInput) => {
     const { filePath, objToSave, format = false, logSaving = false, replaceNonSerializable = false, silent = true, } = saveInput;
     const issues = getSerializationIssues(objToSave);
     if (issues.length > 0) {
         !silent && logSerializationIssues(issues);
-        if (!replaceNonSerializable && !silent) {
+        if (!replaceNonSerializable) {
             const firstIssue = issues[0];
             const errorMessage = `[${getDate()}] Boma got non JSON-serializable object at saveJSON! ${getIssueMessage(firstIssue)}`;
-            console.error(errorMessage);
             throw new Error(errorMessage);
         }
     }
@@ -28,7 +44,7 @@ export const saveJSONAsync = async (saveInput) => {
     }
 };
 export const readJSONAsync = async (props) => {
-    const { filePath, createIfNotFound = false, parseJSON = true, silent = true } = props;
+    const { filePath, createIfNotFound = false, parseJSON = true, silent = true, throwError = false, } = props;
     try {
         const savedfile = await readFile(filePath, 'utf8');
         if (parseJSON) {
@@ -37,41 +53,54 @@ export const readJSONAsync = async (props) => {
         return savedfile;
     }
     catch (err) {
+        if (throwError)
+            throw err;
         if (isErrorWithCode(err)) {
             switch (err.code) {
                 case 'ENOENT':
                     if (createIfNotFound) {
                         !silent && console.log('Try to create: ', filePath);
+                        const initialValue = typeof createIfNotFound === 'boolean' ? {} : createIfNotFound;
+                        const initialContent = JSON.stringify(initialValue);
                         try {
-                            const initialContent = typeof createIfNotFound === 'boolean' ? '{}' : JSON.stringify(createIfNotFound);
-                            await writeFile(filePath, initialContent, 'utf8');
+                            await writeFile(filePath, initialContent, { encoding: 'utf8', flag: 'wx' });
                         }
                         catch (writeErr) {
-                            console.error(`Error creating file ${filePath}: `, writeErr, '\n');
+                            if (isErrorWithCode(writeErr) && writeErr.code === 'EEXIST') {
+                                return readJSONAsync({ ...props, createIfNotFound: false });
+                            }
+                            if (throwError)
+                                throw writeErr;
+                            console.error(`[${getDate()}] Boma got error while creating file ${filePath}: `, writeErr, '\n');
                         }
-                        return (typeof createIfNotFound === 'boolean' ? {} : createIfNotFound);
+                        return (parseJSON ? initialValue : initialContent);
                     }
-                    console.info("Boma can't find file: ", filePath);
+                    !silent && console.info("Boma can't find file: ", filePath);
                     return parseJSON ? {} : null;
                 case 'EACCES':
-                    console.error(`Access denied for ${filePath}`);
+                    !silent && console.error(`[${getDate()}] Access denied error for ${filePath}`);
                     return null;
                 default:
-                    console.error(`Some filesystem error when try readJSON: ${filePath}`);
+                    !silent && console.error(`[${getDate()}] Boma get some filesystem error when try readJSON: ${filePath}`, err);
                     return null;
             }
         }
         if (isSyntaxError(err)) {
-            console.error('File ', filePath, ' has incorrect JSON syntax', '\n');
+            !silent && console.error('File ', filePath, ' has incorrect JSON syntax', '\n');
             return null;
         }
-        console.error('Function readJSON error:', err, '\n');
+        !silent && console.error('Function readJSON error:', err, '\n');
         return null;
     }
 };
-export const addToJSONAsync = async (saveInput) => {
-    const { filePath, dataToAdd, format = false, logSaving = false, replaceNonSerializable = false, silent = true, } = saveInput;
-    const oldJSON = await readJSONAsync({ filePath, createIfNotFound: true, silent });
+export const addToJSONAsync = (saveInput) => runAddToJSONExclusive(saveInput.filePath, async () => {
+    const { filePath, dataToAdd, format = false, logSaving = false, replaceNonSerializable = false, silent = true, throwError = false, } = saveInput;
+    const oldJSON = await readJSONAsync({
+        filePath,
+        createIfNotFound: true,
+        silent,
+        throwError,
+    });
     if (oldJSON === null || typeof oldJSON !== 'object') {
         return saveJSONAsync({
             filePath,
@@ -79,7 +108,7 @@ export const addToJSONAsync = async (saveInput) => {
             format,
             logSaving,
             replaceNonSerializable,
-            silent
+            silent,
         });
     }
     if (Array.isArray(oldJSON) && Array.isArray(dataToAdd)) {
@@ -89,7 +118,7 @@ export const addToJSONAsync = async (saveInput) => {
             format,
             logSaving,
             replaceNonSerializable,
-            silent
+            silent,
         });
         return;
     }
@@ -100,20 +129,22 @@ export const addToJSONAsync = async (saveInput) => {
             format,
             logSaving,
             replaceNonSerializable,
-            silent
+            silent,
         });
         return;
     }
-    if (Array.isArray(dataToAdd) && isPlainMergeableObject(oldJSON) && Object.keys(oldJSON).length === 0) {
+    if (Array.isArray(dataToAdd)
+        && isPlainMergeableObject(oldJSON)
+        && Object.keys(oldJSON).length === 0) {
         await saveJSONAsync({
             filePath,
             objToSave: [...dataToAdd],
             format,
             logSaving,
             replaceNonSerializable,
-            silent
+            silent,
         });
         return;
     }
     throw new Error('Cannot merge array with object');
-};
+});

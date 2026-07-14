@@ -168,6 +168,9 @@ export const sanitizeNonSerializable = (value, path = '$', ancestors = new WeakM
         if (ancestors.has(value)) {
             return 'circular';
         }
+        if (typeof value.toJSON === 'function') {
+            return sanitizeNonSerializable(value.toJSON(), path, ancestors);
+        }
         ancestors.set(value, path);
         const result = {};
         for (const key of Object.keys(value)) {

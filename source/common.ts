@@ -9,8 +9,10 @@ type JSONLikeArray = unknown[];
 export interface ReadJSONProps {
   filePath: string;
   parseJSON?: boolean;
-  createIfNotFound?: boolean | SerializableObject | SerializableArray; // Файл с чем создать, если не создан
+  createIfNotFound?: boolean | SerializableObject | SerializableArray; // Дефолтное содержимое файла для создания если целевой файл не существует
+  // Важно! При throwError файл создан не будет и данный флаг фактически игнорируется
   silent?: boolean; // Не выводим предупреждения
+  throwError?: boolean; // Если true — пробрасываем исходную ошибку чтения/парсинга
   async?: boolean; // Если true — используем асинхронную реализацию
 }
 
@@ -31,6 +33,7 @@ export interface addToJSONProps {
   logSaving?: boolean;
   replaceNonSerializable?: boolean; // Пробрасываем тот же режим и сюда
   silent?: boolean; // Не выводим предупреждения
+  throwError?: boolean; // Пробрасываем строгий режим чтения в addToJSON
   async?: boolean; // Если true — используем асинхронную реализацию
 }
 
@@ -69,6 +72,8 @@ export const isErrorWithCode = (error: unknown): error is ErrorWithCode => {
   return error instanceof Error && 'code' in error;
 };
 
+// В текущей версии isErrorWithMessage нигде не используется, но оставлен в библиотеке так как может быть удобен
+// для использования во многих проектах-потребителях
 export const isErrorWithMessage = (error: unknown): error is ErrorWithMessage => {
   return error instanceof Error && 'message' in error;
 };
@@ -304,6 +309,12 @@ export const sanitizeNonSerializable = (
   if (isObjectLike(value)) {
     if (ancestors.has(value)) {
       return 'circular';
+    }
+
+    // Если у объекта есть нативный метод toJSON - используем его, но предупреждаем
+    // Что запишется не совсем точное значение
+    if (typeof (value as any).toJSON === 'function') {
+      return sanitizeNonSerializable((value as any).toJSON(), path, ancestors);
     }
 
     ancestors.set(value, path);

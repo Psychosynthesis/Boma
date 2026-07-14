@@ -3,14 +3,13 @@ import { addToJSONAsync, readJSONAsync, saveJSONAsync } from './async.js';
 import { getDate, getIssueMessage, getSerializationIssues, isErrorWithCode, isPlainMergeableObject, isSyntaxError, logSerializationIssues, sanitizeNonSerializable } from './common.js';
 export * from './common.js';
 const saveJSONSync = (saveInput) => {
-    const { filePath, objToSave, format = false, logSaving = false, replaceNonSerializable = false, silent = true, } = saveInput;
+    const { filePath, objToSave, format = false, logSaving = false, replaceNonSerializable = false, silent = true } = saveInput;
     const issues = getSerializationIssues(objToSave);
     if (issues.length > 0) {
         !silent && logSerializationIssues(issues);
-        if (!replaceNonSerializable && !silent) {
+        if (!replaceNonSerializable) {
             const firstIssue = issues[0];
             const errorMessage = `[${getDate()}] Boma got non JSON-serializable object at saveJSON! ${getIssueMessage(firstIssue)}`;
-            console.error(errorMessage);
             throw new Error(errorMessage);
         }
     }
@@ -30,7 +29,7 @@ const saveJSONSync = (saveInput) => {
     }
 };
 const readJSONSync = (props) => {
-    const { filePath, createIfNotFound = false, parseJSON = true, silent = true } = props;
+    const { filePath, createIfNotFound = false, parseJSON = true, silent = true, throwError = false, } = props;
     try {
         const savedfile = readFileSync(filePath, 'utf8');
         if (parseJSON) {
@@ -39,41 +38,49 @@ const readJSONSync = (props) => {
         return savedfile;
     }
     catch (err) {
+        if (throwError)
+            throw err;
         if (isErrorWithCode(err)) {
             switch (err.code) {
                 case 'ENOENT':
                     if (createIfNotFound) {
                         !silent && console.log('Try to create: ', filePath);
+                        const initialValue = typeof createIfNotFound === 'boolean' ? {} : createIfNotFound;
+                        const initialContent = JSON.stringify(initialValue);
                         try {
-                            const initialContent = typeof createIfNotFound === 'boolean' ? '{}' : JSON.stringify(createIfNotFound);
-                            writeFileSync(filePath, initialContent, 'utf8');
+                            writeFileSync(filePath, initialContent, { encoding: 'utf8', flag: 'wx' });
                         }
                         catch (writeErr) {
-                            console.error(`Error creating file ${filePath}: `, writeErr, '\n');
+                            if (isErrorWithCode(writeErr) && writeErr.code === 'EEXIST') {
+                                return readJSONSync({ ...props, createIfNotFound: false });
+                            }
+                            if (throwError)
+                                throw writeErr;
+                            console.error(`[${getDate()}] Boma got error while creating file ${filePath}: `, writeErr, '\n');
                         }
-                        return (typeof createIfNotFound === 'boolean' ? {} : createIfNotFound);
+                        return (parseJSON ? initialValue : initialContent);
                     }
-                    console.info("Boma can't find file: ", filePath);
+                    !silent && console.info("Boma can't find file: ", filePath);
                     return parseJSON ? {} : null;
                 case 'EACCES':
-                    console.error(`Access denied for ${filePath}`);
+                    !silent && console.error(`Access denied for ${filePath}`);
                     return null;
                 default:
-                    console.error(`Some filesystem error when try readJSON: ${filePath}`);
+                    !silent && console.error(`Some filesystem error when try readJSON: ${filePath}`, err);
                     return null;
             }
         }
         if (isSyntaxError(err)) {
-            console.error('File ', filePath, ' has incorrect JSON syntax', '\n');
+            !silent && console.error('File ', filePath, ' has incorrect JSON syntax', '\n');
             return null;
         }
-        console.error('Function readJSON error:', err, '\n');
+        !silent && console.error('Function readJSON error:', err, '\n');
         return null;
     }
 };
 const addToJSONSync = (saveInput) => {
-    const { filePath, dataToAdd, format = false, logSaving = false, replaceNonSerializable = false, silent = true, } = saveInput;
-    const oldJSON = readJSONSync({ filePath, createIfNotFound: true, silent });
+    const { filePath, dataToAdd, format = false, logSaving = false, replaceNonSerializable = false, silent = true, throwError = false, } = saveInput;
+    const oldJSON = readJSONSync({ filePath, createIfNotFound: true, silent, throwError });
     if (oldJSON === null || typeof oldJSON !== 'object') {
         return saveJSONSync({ filePath, objToSave: dataToAdd, format, logSaving, replaceNonSerializable, silent });
     }

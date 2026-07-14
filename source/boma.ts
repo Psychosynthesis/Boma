@@ -16,7 +16,7 @@ export * from './common.js';
 
 const saveJSONSync = (saveInput: SaveJSONProps) => {
   const {
-    filePath, objToSave, format = false, logSaving = false, replaceNonSerializable = false, silent = true,
+    filePath, objToSave, format = false, logSaving = false, replaceNonSerializable = false, silent = true
   } = saveInput;
 
   // Сначала собираем все проблемы, чтобы можно было вывести нормальную диагностику
@@ -25,11 +25,12 @@ const saveJSONSync = (saveInput: SaveJSONProps) => {
   if (issues.length > 0) {
     !silent && logSerializationIssues(issues);
 
-    // Если режим замены выключен — ведём себя как раньше, но с точным описанием поля
-    if (!replaceNonSerializable && !silent) {
+    // Если режим замены выключен — выкидываем исключение
+    if (!replaceNonSerializable) {
       const firstIssue = issues[0];
       const errorMessage = `[${getDate()}] Boma got non JSON-serializable object at saveJSON! ${getIssueMessage(firstIssue)}`;
-      console.error(errorMessage);
+      // Если режим замены выключен, стараемся следовать логике нативного подхода: если исполнение дойдёт до JSON.stringify
+      // он выкинет ошибку сериализации, но она будет без нормально описания, которое здесь даёт getIssueMessage
       throw new Error(errorMessage);
     }
   }
@@ -53,7 +54,9 @@ const saveJSONSync = (saveInput: SaveJSONProps) => {
 };
 
 const readJSONSync = <T = any>(props: ReadJSONProps): ReadJSONResult<T> => {
-  const { filePath, createIfNotFound = false, parseJSON = true, silent = true } = props;
+  const {
+    filePath, createIfNotFound = false, parseJSON = true, silent = true, throwError = false,
+  } = props;
 
   try {
     const savedfile = readFileSync(filePath, 'utf8');
@@ -65,42 +68,59 @@ const readJSONSync = <T = any>(props: ReadJSONProps): ReadJSONResult<T> => {
 
     return savedfile;
   } catch (err) {
+    // Если проставлен этот флаг, сами не обрабатываем никакие ошибки,
+    // createIfNotFound также не должен срабатывать в этом случае
+    if (throwError) throw err;
+
     if (isErrorWithCode(err)) {
       switch (err.code) {
         case 'ENOENT':
-          // Если файла нет и попросили создать — создаём
+          // ENOENT здесь ожидаем, если потребитель попросил создать файл.
           if (createIfNotFound) {
             !silent && console.log('Try to create: ', filePath);
+
+            const initialValue = typeof createIfNotFound === 'boolean' ? {} : createIfNotFound;
+            const initialContent = JSON.stringify(initialValue);
+
             try {
-              const initialContent =
-                typeof createIfNotFound === 'boolean' ? '{}' : JSON.stringify(createIfNotFound);
-              writeFileSync(filePath, initialContent, 'utf8');
+              // Не перетираем файл, который мог быть создан другим процессом после readFileSync.
+              writeFileSync(filePath, initialContent, { encoding: 'utf8', flag: 'wx' });
             } catch (writeErr) {
-              console.error(`Error creating file ${filePath}: `, writeErr, '\n');
+              // Если конкурент уже создал файл — читаем фактическое содержимое.
+              if (isErrorWithCode(writeErr) && writeErr.code === 'EEXIST') {
+                return readJSONSync<T>({ ...props, createIfNotFound: false });
+              }
+
+              if (throwError) throw writeErr;
+              // В данную ветку код не должен попадать часто, она срабатывает только при одновременно
+              // включенном createIfNotFound и ошибке записи нового файла. Если данный флаг указан,
+              // создание файла является ожидаемым поведением и даже если в остальных случаях мы
+              // намеренно игнорируем ошибки (throwError = false), тут жалательно хотя бы логгировать ошибку.
+              console.error(`[${getDate()}] Boma got error while creating file ${filePath}: `, writeErr, '\n');
             }
-            return (typeof createIfNotFound === 'boolean' ? {} : createIfNotFound) as T;
+
+            return (parseJSON ? initialValue : initialContent) as T;
           }
 
-          // Здесь, пожалуй, лучше выводить инфу
-          console.info("Boma can't find file: ", filePath);
+          !silent && console.info("Boma can't find file: ", filePath);
           return parseJSON ? ({} as T) : null;
 
-        case 'EACCES': // Нет прав
-          console.error(`Access denied for ${filePath}`);
+        case 'EACCES':
+          !silent && console.error(`Access denied for ${filePath}`);
           return null;
 
         default:
-          console.error(`Some filesystem error when try readJSON: ${filePath}`);
+          !silent && console.error(`Some filesystem error when try readJSON: ${filePath}`, err);
           return null;
       }
     }
 
     if (isSyntaxError(err)) {
-      console.error('File ', filePath, ' has incorrect JSON syntax', '\n');
+      !silent && console.error('File ', filePath, ' has incorrect JSON syntax', '\n');
       return null;
     }
 
-    console.error('Function readJSON error:', err, '\n');
+    !silent && console.error('Function readJSON error:', err, '\n');
     return null;
   }
 };
@@ -110,10 +130,11 @@ const readJSONSync = <T = any>(props: ReadJSONProps): ReadJSONResult<T> => {
 // то эта функция их просто перезапишет
 const addToJSONSync = (saveInput: addToJSONProps) => {
   const {
-    filePath, dataToAdd, format = false, logSaving = false, replaceNonSerializable = false, silent = true,
+    filePath, dataToAdd, format = false, logSaving = false, replaceNonSerializable = false,
+    silent = true, throwError = false,
   } = saveInput;
 
-  const oldJSON = readJSONSync({ filePath, createIfNotFound: true, silent });
+  const oldJSON = readJSONSync({ filePath, createIfNotFound: true, silent, throwError });
 
   // Если старый JSON битый или не объект — просто перезаписываем файл
   if (oldJSON === null || typeof oldJSON !== 'object') {

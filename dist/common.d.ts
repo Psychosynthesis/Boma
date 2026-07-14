@@ -11,6 +11,7 @@ export interface ReadJSONProps {
     parseJSON?: boolean;
     createIfNotFound?: boolean | SerializableObject | SerializableArray;
     silent?: boolean;
+    throwError?: boolean;
     async?: boolean;
 }
 export interface SaveJSONProps {
@@ -29,6 +30,7 @@ export interface addToJSONProps {
     logSaving?: boolean;
     replaceNonSerializable?: boolean;
     silent?: boolean;
+    throwError?: boolean;
     async?: boolean;
 }
 export type ReadJSONSyncProps = ReadJSONProps & {

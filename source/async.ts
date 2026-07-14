@@ -1,22 +1,33 @@
 import { readFile, writeFile } from 'fs/promises';
+import { resolve } from 'path';
 
-import {
-  getDate,
-  getIssueMessage,
-  getSerializationIssues,
-  isErrorWithCode,
-  isPlainMergeableObject,
-  isSyntaxError,
-  logSerializationIssues,
-  sanitizeNonSerializable,
+import { getDate, getIssueMessage, getSerializationIssues, isErrorWithCode,
+  isPlainMergeableObject, isSyntaxError, logSerializationIssues, sanitizeNonSerializable,
 } from './common.js';
-import type {
-  addToJSONProps,
-  ReadJSONProps,
-  ReadJSONResult,
-  SaveJSONProps,
-  Serializable,
-} from './common.js';
+
+import type { addToJSONProps, ReadJSONProps, ReadJSONResult, SaveJSONProps, Serializable } from './common.js';
+
+const addToJSONQueues = new Map<string, Promise<void>>();
+
+// Последовательно выполняем read > merge > write для одного и того же пути
+// внутри текущего Node.js-процесса. Ошибка операции возвращается её вызывающему коду,
+// но не ломает очередь для следующих вызовов.
+const runAddToJSONExclusive = async <T>(filePath: string, operation: () => Promise<T>): Promise<T> => {
+  const key = resolve(filePath);
+  const previous = addToJSONQueues.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  const settled = current.then(() => undefined, () => undefined);
+
+  addToJSONQueues.set(key, settled);
+
+  try {
+    return await current;
+  } finally {
+    if (addToJSONQueues.get(key) === settled) {
+      addToJSONQueues.delete(key);
+    }
+  }
+};
 
 export const saveJSONAsync = async (saveInput: SaveJSONProps): Promise<void> => {
   const {
@@ -34,11 +45,12 @@ export const saveJSONAsync = async (saveInput: SaveJSONProps): Promise<void> => 
   if (issues.length > 0) {
     !silent && logSerializationIssues(issues);
 
-    // Если режим замены выключен — ведём себя как раньше, но с точным описанием поля
-    if (!replaceNonSerializable && !silent) {
+    // Если режим замены выключен — выкидываем исключение
+    if (!replaceNonSerializable) {
       const firstIssue = issues[0];
       const errorMessage = `[${getDate()}] Boma got non JSON-serializable object at saveJSON! ${getIssueMessage(firstIssue)}`;
-      console.error(errorMessage);
+      // Если режим замены выключен, стараемся следовать логике нативного подхода: если исполнение дойдёт до JSON.stringify
+      // он выкинет ошибку сериализации, но она будет без нормально описания, которое здесь даёт getIssueMessage
       throw new Error(errorMessage);
     }
   }
@@ -46,7 +58,7 @@ export const saveJSONAsync = async (saveInput: SaveJSONProps): Promise<void> => 
   // Если режим замены включён — чистим объект перед сохранением
   const valueToSave =
     replaceNonSerializable && issues.length > 0
-      ? sanitizeNonSerializable(objToSave)
+    ? sanitizeNonSerializable(objToSave)
       : (objToSave as Serializable);
 
   try {
@@ -64,7 +76,9 @@ export const saveJSONAsync = async (saveInput: SaveJSONProps): Promise<void> => 
 export const readJSONAsync = async <T = any>(
   props: ReadJSONProps,
 ): Promise<ReadJSONResult<T>> => {
-  const { filePath, createIfNotFound = false, parseJSON = true, silent = true } = props;
+  const {
+    filePath, createIfNotFound = false, parseJSON = true, silent = true, throwError = false,
+  } = props;
 
   try {
     const savedfile = await readFile(filePath, 'utf8');
@@ -76,42 +90,57 @@ export const readJSONAsync = async <T = any>(
 
     return savedfile;
   } catch (err) {
+    // Если проставлен этот флаг, сами не обрабатываем никакие ошибки,
+    // createIfNotFound также не должен срабатывать в этом случае
+    if (throwError) throw err;
+
     if (isErrorWithCode(err)) {
       switch (err.code) {
         case 'ENOENT':
-          // Если файла нет и попросили создать — создаём
           if (createIfNotFound) {
             !silent && console.log('Try to create: ', filePath);
+
+            const initialValue = typeof createIfNotFound === 'boolean' ? {} : createIfNotFound;
+            const initialContent = JSON.stringify(initialValue);
+
             try {
-              const initialContent =
-                typeof createIfNotFound === 'boolean' ? '{}' : JSON.stringify(createIfNotFound);
-              await writeFile(filePath, initialContent, 'utf8');
+              await writeFile(filePath, initialContent, { encoding: 'utf8', flag: 'wx' });
             } catch (writeErr) {
-              console.error(`Error creating file ${filePath}: `, writeErr, '\n');
+              if (isErrorWithCode(writeErr) && writeErr.code === 'EEXIST') {
+                return readJSONAsync<T>({ ...props, createIfNotFound: false });
+              }
+
+              if (throwError) throw writeErr;
+              // В данную ветку код не должен попадать часто, она срабатывает только при одновременно
+              // включенном createIfNotFound и ошибке записи нового файла. Если данный флаг указан,
+              // создание файла является ожидаемым поведением и даже если в остальных случаях мы
+              // намеренно игнорируем ошибки (throwError = false), тут жалательно хотя бы логгировать ошибку.
+              console.error(`[${getDate()}] Boma got error while creating file ${filePath}: `, writeErr, '\n');
             }
-            return (typeof createIfNotFound === 'boolean' ? {} : createIfNotFound) as T;
+
+            // Учитываем флаг parseJSON при возврате
+            return (parseJSON ? initialValue : initialContent) as T;
           }
 
-          // Здесь, пожалуй, лучше выводить инфу
-          console.info("Boma can't find file: ", filePath);
+          !silent && console.info("Boma can't find file: ", filePath);
           return parseJSON ? ({} as T) : null;
 
-        case 'EACCES': // Нет прав
-          console.error(`Access denied for ${filePath}`);
+        case 'EACCES':
+          !silent && console.error(`[${getDate()}] Access denied error for ${filePath}`);
           return null;
 
         default:
-          console.error(`Some filesystem error when try readJSON: ${filePath}`);
+          !silent && console.error(`[${getDate()}] Boma get some filesystem error when try readJSON: ${filePath}`, err);
           return null;
       }
     }
 
     if (isSyntaxError(err)) {
-      console.error('File ', filePath, ' has incorrect JSON syntax', '\n');
+      !silent && console.error('File ', filePath, ' has incorrect JSON syntax', '\n');
       return null;
     }
 
-    console.error('Function readJSON error:', err, '\n');
+    !silent && console.error('Function readJSON error:', err, '\n');
     return null;
   }
 };
@@ -119,71 +148,82 @@ export const readJSONAsync = async <T = any>(
 // Важно:
 // если в сохранённом JSON уже были те же ключи, что и в dataToAdd,
 // то эта функция их просто перезапишет
-export const addToJSONAsync = async (saveInput: addToJSONProps): Promise<void> => {
-  const {
-    filePath,
-    dataToAdd,
-    format = false,
-    logSaving = false,
-    replaceNonSerializable = false,
-    silent = true,
-  } = saveInput;
-
-  const oldJSON = await readJSONAsync({ filePath, createIfNotFound: true, silent });
-
-  // Если старый JSON битый или не объект — просто перезаписываем файл
-  if (oldJSON === null || typeof oldJSON !== 'object') {
-    return saveJSONAsync({
+export const addToJSONAsync = (saveInput: addToJSONProps): Promise<void> =>
+  runAddToJSONExclusive(saveInput.filePath, async () => {
+    const {
       filePath,
-      objToSave: dataToAdd,
-      format,
-      logSaving,
-      replaceNonSerializable,
-      silent
-    });
-  }
+      dataToAdd,
+      format = false,
+      logSaving = false,
+      replaceNonSerializable = false,
+      silent = true,
+      throwError = false,
+    } = saveInput;
 
-  // Был массив + пришёл массив => склеиваем
-  if (Array.isArray(oldJSON) && Array.isArray(dataToAdd)) {
-    await saveJSONAsync({
+    const oldJSON = await readJSONAsync({
       filePath,
-      objToSave: [...oldJSON, ...dataToAdd],
-      format,
-      logSaving,
-      replaceNonSerializable,
-      silent
+      createIfNotFound: true,
+      silent,
+      throwError,
     });
 
-    return;
-  }
+    // Если старый JSON битый или не объект — просто перезаписываем файл
+    if (oldJSON === null || typeof oldJSON !== 'object') {
+      return saveJSONAsync({
+        filePath,
+        objToSave: dataToAdd,
+        format,
+        logSaving,
+        replaceNonSerializable,
+        silent,
+      });
+    }
 
-  // Был объект + пришёл объект => мерджим
-  if (isPlainMergeableObject(oldJSON) && isPlainMergeableObject(dataToAdd)) {
-    await saveJSONAsync({
-      filePath,
-      objToSave: { ...oldJSON, ...dataToAdd },
-      format,
-      logSaving,
-      replaceNonSerializable,
-      silent
-    });
+    // Был массив + пришёл массив => склеиваем
+    if (Array.isArray(oldJSON) && Array.isArray(dataToAdd)) {
+      await saveJSONAsync({
+        filePath,
+        objToSave: [...oldJSON, ...dataToAdd],
+        format,
+        logSaving,
+        replaceNonSerializable,
+        silent,
+      });
 
-    return;
-  }
+      return;
+    }
 
-  // В файле пустой объект, а сохранить хотим массив => просто пишем массив
-  if (Array.isArray(dataToAdd) && isPlainMergeableObject(oldJSON) && Object.keys(oldJSON).length === 0) {
-    await saveJSONAsync({
-      filePath,
-      objToSave: [...dataToAdd],
-      format,
-      logSaving,
-      replaceNonSerializable,
-      silent
-    });
+    // Был объект + пришёл объект => мерджим
+    if (isPlainMergeableObject(oldJSON) && isPlainMergeableObject(dataToAdd)) {
+      await saveJSONAsync({
+        filePath,
+        objToSave: { ...oldJSON, ...dataToAdd },
+        format,
+        logSaving,
+        replaceNonSerializable,
+        silent,
+      });
 
-    return;
-  }
+      return;
+    }
 
-  throw new Error('Cannot merge array with object');
-};
+    // В файле пустой объект, а сохранить хотим массив => просто пишем массив
+    if (
+      Array.isArray(dataToAdd)
+      && isPlainMergeableObject(oldJSON)
+      && Object.keys(oldJSON).length === 0
+    ) {
+      await saveJSONAsync({
+        filePath,
+        objToSave: [...dataToAdd],
+        format,
+        logSaving,
+        replaceNonSerializable,
+        silent,
+      });
+
+      return;
+    }
+
+    throw new Error('Cannot merge array with object');
+  });

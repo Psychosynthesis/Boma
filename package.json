@@ -1,6 +1,6 @@
 {
   "name": "boma",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Simple JSON helper",
   "main": "./dist/boma.js",
   "types": "./dist/boma.d.ts",

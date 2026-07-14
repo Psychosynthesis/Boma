@@ -2,27 +2,32 @@
 
 [![npm version](https://img.shields.io/npm/v/boma?color=%20027dec)](https://www.npmjs.org/package/boma)
 
-Super-simple helper for reading, saving and updating JSON files.
+Super-simple helper for reading, saving and updating JSON files. Zero runtime dependencies.
 
-Works in synchronous mode by default.
-Pass `async: true` to use the asynchronous implementation.
-
+Works in synchronous mode by default. Pass `async: true` to use the asynchronous implementation.
 Old synchronous calls remain unchanged.
 
-# Install
+## Basic features
+- Using the `createIfNotFound` parameter in `readJSON` and `addToJSONS`, you can immediately create a missing file with the specified (default) object or array without any additional steps. This is convenient, for example, for writing configuration files.
+- `addToJSON` — reads a file and shallow merges objects or concatenates arrays.
+- Flag `replaceNonSerializable` — replaces `function`, `undefined`, `bigint`, `loops`, `NaN`, and `Infinity` with understandable markers.
+- Flag `getSerializationIssues` — shows all problematic fields with paths like `[OBJECT].user.callback`.
+- Single interface with `async: true`, instead of separate `readFile` / `readFileSync`.
+- You can get raw text using flag `parseJSON`: false.
+- By default, boma hides many errors when reading a file and returns `null` or `{}` — this is very convenient in a production environment. If necessary, you can set the `throwError: true` in `readJSON` and `addToJSONS` to catch and handle all errors yourself. However, write errors are much more critical, so `boma` always throws them.
+- Concurrent `addToJSON` calls within the same process are serialized per file, preventing lost updates from overlapping read–merge–write cycles. **Important! This does not provide cross-process or cross-thread locking, so multiple workers or external writers may still cause race conditions.**
 
+## Install
 ```bash
 npm install boma
 ```
 
-# Import
-
+## Import
 ```typescript
 import { readJSON, saveJSON, addToJSON } from 'boma';
 ```
 
-# Synchronous usage
-
+## Synchronous usage
 Without the `async` option, all functions work synchronously.
 
 ```typescript
@@ -72,9 +77,9 @@ addToJSON({
       someFunc: () => {},
     },
   },
-  format: false,
+  format: false, // Add line-breaks for result file
   logSaving: false,
-  replaceNonSerializable: true,
+  replaceNonSerializable: true, // Replace non-serializable values ​​with descriptive strings (e.g. function for a function)
 });
 
 /*
@@ -89,10 +94,8 @@ Will save:
 */
 ```
 
-# Asynchronous usage
-
+## Asynchronous usage
 Pass `async: true` to any main function.
-
 In this mode:
 
 * `readJSON` returns a `Promise` with the read value;
@@ -139,12 +142,11 @@ await addToJSON({
 
 The same functions are used in both modes. Separate async imports are not required.
 
-# Reading JSON
+## Reading JSON
+Minimal example:
 
 ```typescript
-const result = readJSON({
-  filePath: '/test.json',
-});
+const result = readJSON({ filePath: '/test.json' });
 ```
 
 Default options:
@@ -163,59 +165,39 @@ When `parseJSON` is `true`, file content is parsed using `JSON.parse`.
 When `parseJSON` is `false`, raw file content is returned as a string.
 
 ```typescript
-const rawContent = readJSON({
-  filePath: '/test.json',
-  parseJSON: false,
-});
+const rawContent = readJSON({ filePath: '/test.json', parseJSON: false });
+// rawContent will be a string here
 ```
 
 When `createIfNotFound` is `true`, a missing file is created with an empty object:
 
 ```typescript
-const result = readJSON({
-  filePath: '/test.json',
-  createIfNotFound: true,
-});
+const result = readJSON({ filePath: '/test.json', createIfNotFound: true });
+// test.json will contain a `{}` string if not existing before
 ```
 
 You can also provide the initial object or array:
 
 ```typescript
-const result = readJSON({
-  filePath: '/test.json',
-  createIfNotFound: {
-    created: true,
-  },
-});
+const result = readJSON({ filePath: '/test.json', createIfNotFound: { default: 'info' } });
 ```
 
-# Saving JSON
+## Saving JSON
+Minimal example:
 
 ```typescript
-saveJSON({
-  filePath: '/test.json',
-  objToSave: {
-    any: 'data',
-  },
-});
+saveJSON({ filePath: '/test.json', objToSave: { any: 'data' } });
 ```
 
 Use `format: true` to save formatted JSON with indentation and line breaks:
 
 ```typescript
-saveJSON({
-  filePath: '/test.json',
-  objToSave: {
-    any: 'data',
-  },
-  format: true,
-});
+saveJSON({ filePath: '/test.json', objToSave: { any: 'data' }, format: true });
 ```
 
 Use `logSaving: true` to log successful file saving when `silent` is `false`.
 
-# Non-serializable values
-
+## Non-serializable values
 JSON does not support values such as:
 
 * `undefined`;
@@ -251,41 +233,24 @@ Will save:
   "invalidNumber": "non-finite-number"
 }
 ```
+The `format` flag is setted, so there will be a line breaks.
 
 Circular references are replaced with `"circular"`.
 
-# Adding data to JSON
-
+## Adding data to JSON
 `addToJSON` reads the existing file, merges the new data and saves the result.
 
 Objects are shallow merged:
 
 ```typescript
-// Existing file:
-{
-  "first": 1,
-  "second": 2
-}
+// Existing test.json: { "first": 1, "second": 2 }
+addToJSON({ filePath: '/test.json', dataToAdd: { second: 20, third: 3 } });
 ```
 
-```typescript
-addToJSON({
-  filePath: '/test.json',
-  dataToAdd: {
-    second: 20,
-    third: 3,
-  },
-});
-```
-
-Result:
+Result (the `format` flag is disabled by default, so there will be no line breaks):
 
 ```json
-{
-  "first": 1,
-  "second": 20,
-  "third": 3
-}
+{ "first": 1, "second": 20, "third": 3 }
 ```
 
 Existing object keys are overwritten by values from `dataToAdd`.
@@ -298,10 +263,7 @@ Arrays are concatenated:
 ```
 
 ```typescript
-addToJSON({
-  filePath: '/test.json',
-  dataToAdd: [3, 4],
-});
+addToJSON({ filePath: '/test.json', dataToAdd: [3, 4] });
 ```
 
 Result:
@@ -318,42 +280,30 @@ Cannot merge array with object
 
 A missing file is created automatically.
 
-# Typed reading
-
+## Typed reading
 A result type can be passed to `readJSON`:
 
 ```typescript
-interface Config {
-  port: number;
-  production: boolean;
-}
+interface Config { port: number; production: boolean; }
 
-const config = readJSON<Config>({
-  filePath: '/config.json',
-});
+const config = readJSON<Config>({ filePath: '/config.json' });
 ```
 
 Async mode uses the same generic:
 
 ```typescript
-const config = await readJSON<Config>({
-  filePath: '/config.json',
-  async: true,
-});
+const config = await readJSON<Config>({ filePath: '/config.json', async: true });
 ```
 
 Because `parseJSON: false` returns a string and reading errors can return `null`, the complete result type also includes `string | null`.
 
-# Types
-
+## Types
 Main types:
 
 ```typescript
 export type SerializablePrimitive = string | number | boolean | null;
 export type SerializableArray = Serializable[];
-export type SerializableObject = {
-  [key: string]: Serializable;
-};
+export type SerializableObject = { [key: string]: Serializable; };
 
 export type Serializable =
   | SerializablePrimitive
@@ -397,31 +347,24 @@ export interface addToJSONProps {
 Types used for synchronous and asynchronous overloads are also exported:
 
 ```typescript
-export type ReadJSONSyncProps =
-  ReadJSONProps & { async?: false };
+export type ReadJSONSyncProps = ReadJSONProps & { async?: false };
 
-export type ReadJSONAsyncProps =
-  ReadJSONProps & { async: true };
+export type ReadJSONAsyncProps = ReadJSONProps & { async: true };
 
-export type SaveJSONSyncProps =
-  SaveJSONProps & { async?: false };
+export type SaveJSONSyncProps = SaveJSONProps & { async?: false };
 
-export type SaveJSONAsyncProps =
-  SaveJSONProps & { async: true };
+export type SaveJSONAsyncProps = SaveJSONProps & { async: true };
 
-export type AddToJSONSyncProps =
-  addToJSONProps & { async?: false };
+export type AddToJSONSyncProps = addToJSONProps & { async?: false };
 
-export type AddToJSONAsyncProps =
-  addToJSONProps & { async: true };
+export type AddToJSONAsyncProps = addToJSONProps & { async: true };
 
-export type ReadJSONResult<T = any> =
-  T | string | null;
+export type ReadJSONResult<T = any> = T | string | null;
 ```
 
-# Helpers
+## Helpers
 
-The package also exports serialization and type-checking helpers:
+The package also exports few serialization and type-checking helpers:
 
 ```typescript
 isSerializable(value);
@@ -456,3 +399,5 @@ const issues = getSerializationIssues({
 ]
 */
 ```
+
+You also can use simple checker: `isSerializable(value: unknown)` (return `boolean`).
